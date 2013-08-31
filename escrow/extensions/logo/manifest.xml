@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE extension SYSTEM "ext-1.0.dtd">
+
+<extension engine="1.0">
+<id>logo</id>
+<title>Logo</title>
+<description>Add logo in header</description>
+<author>floop</author>
+<version>0.5.2</version>
+<minversion>1.4.2</minversion>
+<maxtestedon>1.4.2</maxtestedon>
+  
+  <install><![CDATA[
+		forum_config_add('o_logo_src', '0');
+		forum_config_add('o_logo_enable', '0');
+		forum_config_add('o_logo_hide_forum_title', '0');
+		forum_config_add('o_logo_width', '0');
+		forum_config_add('o_logo_height', '0');
+		forum_config_add('o_logo_align', 'left');
+		forum_config_add('o_logo_title_align', 'left');
+		forum_config_add('o_logo_title_vertical', 'middle');
+		forum_config_add('o_logo_link', $base_url);
+		forum_config_add('o_logo_link_title', $forum_config['o_board_title']);
+		
+
+	]]></install>
+	
+	<uninstall><![CDATA[
+		//unlink('..'.$forum_config['o_logo_src']);
+		forum_config_remove('o_logo_src');
+		forum_config_remove('o_logo_enable');
+		forum_config_remove('o_logo_hide_forum_title');
+		forum_config_remove('o_logo_width');
+		forum_config_remove('o_logo_height');
+		forum_config_remove('o_logo_align');
+		forum_config_remove('o_logo_title_align');
+		forum_config_remove('o_logo_title_vertical');
+		forum_config_remove('o_logo_link');
+		forum_config_remove('o_logo_link_title');
+	]]></uninstall>
+  
+<hooks>
+	<hook id="ca_fn_generate_admin_menu_new_sublink"><![CDATA[
+if (!isset($logo))
+{	
+	if ($forum_user['language'] != 'English' && file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/lang.php'))
+	{
+		require $ext_info['path'].'/lang/'.$forum_user['language'].'/lang.php';
+	}
+	else
+	{
+		require $ext_info['path'].'/lang/English/lang.php';
+	}
+}
+
+$forum_url['admin_settings_logo'] = 'admin/settings.php?section=logo';
+
+if (FORUM_PAGE_SECTION == 'settings')
+	{
+		$forum_page['admin_submenu']['settings-logo'] = '<li class="'.((FORUM_PAGE == 'admin-settings-logo') ? 'active' : 'normal').((empty($forum_page['admin_submenu'])) ? ' first-item' : '').'"><a href="'.forum_link($forum_url['admin_settings_logo']).'">'.$logo['logo'].'</a></li>';
+	}
+]]></hook>
+
+<hook id="aop_pre_update_configuration"><![CDATA[
+	switch ($section)
+	{
+		case 'logo':
+		{
+	
+	if($_FILES['logo_src']['tmp_name'])
+		{
+			$file=$_FILES['logo_src'];
+			$allow = array(
+				'types' => array(IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_GIF),
+				'mime_types' => array('image/gif', 'image/jpeg', 'image/pjpeg', 'image/png', 'image/x-png'),
+				'max_width' => '1000',
+				'max_height' => '200');
+
+		if(getimagesize($file['tmp_name']) && in_array($file['type'], $allow['mime_types']))
+			{
+				list($file['width'],$file['height'],$file['image_type'])=getimagesize($file['tmp_name']);
+
+
+
+				if($file['width']<=$allow['max_width'] && $file['height']<=$allow['max_height'] && in_array($file['image_type'],$allow['types']))
+							{
+								$pos = strrpos($file['name'], '.'); 
+								$basename = substr($file['name'], 0, $pos); 
+								$ext = strtolower(substr($file['name'], $pos+1));
+								if ($forum_config['o_logo_src'] != '0')
+									@unlink('..'.$forum_config['o_logo_src']);
+								if(!@rename($file['tmp_name'], '../img/logo.'.$ext))
+									{
+										message($logo['error_chmod']);
+									}
+								
+								else
+									{
+								$form['logo_src']='/img/logo.'.$ext;
+								@chmod('..'.$forum_config['o_logo_src'], 0644);
+								$form['logo_width']=$file['width'];
+								$form['logo_height']=$file['height'];
+									}
+							}
+							else message($logo['error_format']);
+					}
+					else message($logo['error_mime_type']);
+		}
+		$forum_url['admin_settings_logo'] = 'admin/settings.php?section=logo';
+		
+		if($forum_config['o_logo_src'] == '0') $form['logo_enable'] = '0';
+		if (!isset($form['logo_enable']) || $form['logo_enable'] != '1') $form['logo_enable'] = '0';
+		if (!isset($form['logo_hide_forum_title']) || $form['logo_hide_forum_title'] != '1') $form['logo_hide_forum_title'] = '0';
+}
+
+default:
+{
+	break;
+}
+}	
+]]></hook>
+
+<hook id="co_common" ><![CDATA[
+if (!isset($logo)) {
+	if ($forum_user['language'] != 'English' && file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/lang.php')) {
+		require $ext_info['path'].'/lang/'.$forum_user['language'].'/lang.php';
+	} else {
+		require $ext_info['path'].'/lang/English/lang.php';
+	}
+}
+]]></hook>
+
+
+
+
+<hook id="hd_head" ><![CDATA[
+	if($forum_config['o_logo_src'] != '0')
+		{
+			$check_file=@fopen(FORUM_ROOT.$forum_config['o_logo_src'], 'r');
+			if($check_file)
+			fclose($check_file);
+			else $forum_config['o_logo_enable'] = '0';
+		}
+		if ($forum_config['o_logo_enable'] == '1' )
+			{
+				$forum_loader->add_css($ext_info['url'].'/main.css', array('type' => 'url'));
+				$forum_loader->add_css('div.logo{background-image:url('.$base_url.$forum_config['o_logo_src'].'); width:'.$forum_config['o_logo_width'].'px; height:'.$forum_config['o_logo_height'].'px;}td.logo{width:'.$forum_config['o_logo_width'].'px; height:'.$forum_config['o_logo_height'].'px;}', array('type' => 'inline'));
+			}	
+	
+]]></hook>
+
+
+    <hook id="hd_gen_elements" priority="6"><![CDATA[
+
+			
+			if( $forum_config['o_logo_enable'] == '1' && $forum_config['o_logo_align'] == 'left' )
+				{
+					$gen_elements['<!-- forum_title -->'] = '<table class="logo">';
+					$gen_elements['<!-- forum_title -->'] .= '<td class="logo" id="left" ><div  id="left" class="logo">';
+					$gen_elements['<!-- forum_title -->'] .= ($forum_config['o_logo_link'] != '') ? '<a class="logo" href="'.$forum_config['o_logo_link'].'" title="'.$forum_config['o_logo_link_title'].'"></a></div></td>' : '</div></td>';
+					$gen_elements['<!-- forum_title -->'] .= '<td class="title" style="vertical-align:'.$forum_config['o_logo_title_vertical'].'">';
+					$gen_elements['<!-- forum_title -->'] .= ($forum_config['o_logo_hide_forum_title'] != '1') ? '<p id="brd-title" style="text-align:'.$forum_config['o_logo_title_align'].'"><a href="'.forum_link($forum_url['index']).'">'.forum_htmlencode($forum_config['o_board_title']).'</a></p>' : '';
+					$gen_elements['<!-- forum_desc -->'] = ($forum_config['o_board_desc'] != '') ? '<p id="brd-desc" style="text-align:'.$forum_config['o_logo_title_align'].'">'.forum_htmlencode($forum_config['o_board_desc']).'</p></td>' : '</td>';
+					$gen_elements['<!-- forum_desc -->'] .= (isset($ad)) ? "<td><div style='float:right;background:#999'>{$ad}</div></td></table>" : '</table>';
+				}
+			if( $forum_config['o_logo_enable'] == '1' && $forum_config['o_logo_align'] == 'right' )
+				{
+					$gen_elements['<!-- forum_title -->'] = (isset($ad)) ? "<table class='logo'><td><div style='background:#999'>{$ad}</div></td>" : '<table class="logo">';
+					$gen_elements['<!-- forum_title -->'] .= '<td class="title" style="vertical-align:'.$forum_config['o_logo_title_vertical'].'">';
+					$gen_elements['<!-- forum_title -->'] .= ($forum_config['o_logo_hide_forum_title'] != '1') ? '<p id="brd-title" style="text-align:'.$forum_config['o_logo_title_align'].'"><a href="'.forum_link($forum_url['index']).'">'.forum_htmlencode($forum_config['o_board_title']).'</a></p>' : '';
+					$gen_elements['<!-- forum_desc -->'] = ($forum_config['o_board_desc'] != '') ? '<p id="brd-desc" style="text-align:'.$forum_config['o_logo_title_align'].'">'.forum_htmlencode($forum_config['o_board_desc']).'</p></td>' : '</td>';
+					$gen_elements['<!-- forum_desc -->'] .= '<td class="logo" id="right"><div id="right" class="logo">';
+					$gen_elements['<!-- forum_desc -->'] .= ($forum_config['o_logo_link'] != '') ? '<a class="logo" href="'.$forum_config['o_logo_link'].'" title="'.$forum_config['o_logo_link_title'].'"></a></div></td></table>' : '</div></td></table>';
+					
+				}
+	]]></hook>
+				
+				
+				
+				
+<hook id="aop_new_section"><![CDATA[
+
+if($section == 'logo'){
+if (!isset($logo)) {
+	if ($forum_user['language'] != 'English' && file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/lang.php')) {
+		require $ext_info['path'].'/lang/'.$forum_user['language'].'/lang.php';
+	} else {
+		require $ext_info['path'].'/lang/English/lang.php';
+	}
+}
+
+$forum_page['group_count'] = $forum_page['item_count'] = $forum_page['fld_count'] = 0;
+$forum_url['admin_settings_logo'] = 'admin/settings.php?section=logo';
+
+	// Setup breadcrumbs
+	$forum_page['crumbs'] = array(
+		array($forum_config['o_board_title'], forum_link($forum_url['index'])),
+		array($lang_admin_common['Forum administration'], forum_link($forum_url['admin_index'])),
+		array($lang_admin_common['Settings'], forum_link($forum_url['admin_settings_setup'])),
+		array($logo['logo'], forum_link($forum_url['admin_settings_logo']))
+	);
+
+	define('FORUM_PAGE_SECTION', 'settings');
+	define('FORUM_PAGE', 'admin-settings-logo');
+	require FORUM_ROOT.'header.php';
+
+	// START SUBST - <!-- forum_main -->
+	ob_start();
+	$check_file=@fopen('..'.$forum_config['o_logo_src'], 'r');
+
+				?>
+					<div class="main-content frm parted">
+						<form class="frm-form" enctype="multipart/form-data" method="post" accept-charset="utf-8" action="<?php echo forum_link($forum_url['admin_settings_logo']) ?>">
+							<div class="hidden">
+								<input type="hidden" name="csrf_token" value="<?php echo generate_form_token(forum_link($forum_url['admin_settings_logo'])) ?>" />
+								<input type="hidden" name="form_sent" value="1" />
+								<input type="hidden" name="form[0]" value="0" />
+							</div>
+
+
+					<div class="content-head">
+						<h2 class="hn"><span><?php echo $logo['settings'] ?></span></h2>
+					</div>
+						<fieldset class="frm-group group1">
+
+						<?
+							
+							
+						if($forum_config['o_logo_src'] != '0'){
+							?>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text required">
+						<label for="fld<?php echo ++$forum_page['fld_count'] ?>"><span><?php echo $logo['current'] ?></span></label>
+							<?if($check_file) echo '<div style="border: solid 1px #999; margin-left: 10px; height:'.$forum_config['o_logo_height'].'px; width:'.$forum_config['o_logo_width'].'px;"><img src="'.$base_url.$forum_config['o_logo_src'].'"></div>';
+							else echo '<span style="margin-left: 10px; position: relative; top: 2px;">'.$logo['file_not_found'].'</span>'; ?>
+						</div>
+					</div>
+					
+					<?
+				}
+				if (!is_writable(FORUM_ROOT.'img/'))
+					echo '<div class="ct-box warn-box"><p class="important">'.$logo['not_writable'].'</p></div>';
+				else{
+					?>
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text required">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>"><span><?php echo $logo['upload_logo'] ?></span><small><?php echo $logo['upload_logo_desc'] ?></small></label><br />
+							<span class="fld-input"><input id="fld<?php echo $forum_page['fld_count'] ?>" name="logo_src" type="file" size="40" /></span>	
+						</div>
+					</div>
+					<?}
+					if($forum_config['o_logo_src'] != '0'){
+						?>
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box checkbox">
+						<span class="fld-input"><input type="checkbox" id="fld<?php echo ++$forum_page['fld_count'] ?>" name="form[logo_enable]" value="1" <?php if ($forum_config['o_logo_enable'] == '1') echo 'checked' ?> /></span>
+							<label for="fld<?php echo $forum_page['fld_count'] ?>"><?php echo $logo['enable_logo'] ?>
+							</label>
+						</div>
+					</div>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box select">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>"><span><?php echo $logo['logo_align'] ?></span></label><br />
+							<span class="fld-input"><select id="fld<?php echo $forum_page['fld_count'] ?>" name="form[logo_align]">
+							<option value="left"<?php if ($forum_config['o_logo_align'] == 'left') echo ' selected="selected"' ?>><? echo $logo['left'] ?></option>
+							<option value="right"<?php if ($forum_config['o_logo_align'] == 'right') echo ' selected="selected"' ?>><? echo $logo['right'] ?></option>
+							</select></span>
+						</div>
+					</div>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box select">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>"><span><?php echo $logo['title_align'] ?></span><small><?php echo $logo['horizontal'] ?></small></label><br />
+							<span class="fld-input"><select id="fld<?php echo $forum_page['fld_count'] ?>" name="form[logo_title_align]" >
+							<option value="left"<?php if ($forum_config['o_logo_title_align'] == 'left') echo ' selected="selected"' ?>><? echo $logo['left'] ?></option>
+							<option value="center"<?php if ($forum_config['o_logo_title_align'] == 'center') echo ' selected="selected"' ?>><? echo $logo['center'] ?></option>
+							<option value="right"<?php if ($forum_config['o_logo_title_align'] == 'right') echo ' selected="selected"' ?>><? echo $logo['right'] ?></option>
+							</select></span>
+						</div>
+					</div>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box select">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>"><span><?php echo $logo['title_vertical'] ?></span><small><?php echo $logo['vertical'] ?></small></label><br />
+							<span class="fld-input"><select id="fld<?php echo $forum_page['fld_count'] ?>" name="form[logo_title_vertical]">
+							<option value="top"<?php if ($forum_config['o_logo_title_vertical'] == 'top') echo ' selected="selected"' ?>><? echo $logo['top'] ?></option>
+							<option value="middle"<?php if ($forum_config['o_logo_title_vertical'] == 'middle') echo ' selected="selected"' ?>><? echo $logo['middle'] ?></option>
+							<option value="bottom"<?php if ($forum_config['o_logo_title_vertical'] == 'bottom') echo ' selected="selected"' ?>><? echo $logo['bottom'] ?></option>
+							</select></span>
+						</div>
+					</div>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box checkbox">
+						<span class="fld-input"><input type="checkbox" id="fld<?php echo ++$forum_page['fld_count'] ?>" name="form[logo_hide_forum_title]" value="1" <?php if ($forum_config['o_logo_hide_forum_title'] == '1') echo 'checked';?> /></span>
+							<label for="fld<?php echo $forum_page['fld_count'] ?>"><?php echo $logo['hide_board_title'] ?></label>
+						</div>
+					</div>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><? echo $logo['logo_link_url'] ?></span>
+								<small><? echo $logo['logo_link_url_example'] ?></small>
+							</label><br />
+							<span class="fld-input"><input type="text" id="fld<?php echo $forum_page['fld_count'] ?>" name="form[logo_link]" size="50" maxlength="255" value="<?php echo forum_htmlencode($forum_config['o_logo_link']) ?>" /></span>
+						</div>
+					</div>
+
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><? echo $logo['logo_link_title'] ?></span>
+							</label><br />
+							<span class="fld-input"><input type="text" id="fld<?php echo $forum_page['fld_count'] ?>" name="form[logo_link_title]" size="50" maxlength="255" value="<?php echo forum_htmlencode($forum_config['o_logo_link_title']) ?>" /></span>
+						</div>
+					</div>
+					<?
+				}
+				?>
+			</fieldset>
+						<div class="frm-buttons">
+							<span class="submit primary"><input type="submit" name="save" value="<?php echo $lang_admin_common['Save changes'] ?>" /></span>
+						</div>
+					</form>
+				</div><?
+}
+]]></hook>
+
+</hooks>
+</extension>

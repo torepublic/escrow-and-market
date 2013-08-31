@@ -1,0 +1,879 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE extension SYSTEM "ext-1.0.dtd">
+
+<!--
+/**
+ * Allows users to create voting
+ *
+ * @copyright Copyright (C) 2008-2012 PunBB
+ * @license http://www.gnu.org/licenses/gpl.html GPL version 2 or higher
+ * @package pun_poll
+ */
+-->
+
+<extension engine="1.0">
+	<id>pun_poll</id>
+	<title>Pun poll</title>
+	<version>2.3</version>
+	<description>Adds polls feature for topics.</description>
+	<author>PunBB Development team</author>
+
+	<minversion>1.4RC1</minversion>
+	<maxtestedon>1.4.2</maxtestedon>
+
+	<install><![CDATA[
+		if (!$forum_db->table_exists('questions'))
+		{
+			$schema = array(
+				'FIELDS' => array(
+					'topic_id'		=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> false
+					),
+					'question'			=> array(
+						'datatype'		=> 'VARCHAR(200)',
+						'allow_null'	=> false
+					),
+					'read_unvote_users'		=> array(
+						'datatype'		=> 'tinyint(1)',
+						'allow_null'	=> true
+					),
+					'revote'			=> array(
+						'datatype'		=> 'tinyint(1)',
+						'allow_null'	=> true
+					),
+					'created'	=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> false
+					),
+					'days_count'	=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> true
+					),
+					'votes_count'	=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> true
+					)
+				),
+				'PRIMARY KEY'	=>	array('topic_id')
+			);
+			$forum_db->create_table('questions', $schema);
+		}
+
+		if (!$forum_db->table_exists('voting'))
+		{
+			$schema = array(
+				'FIELDS'		=> array(
+					'id'			=> array(
+						'datatype'		=> 'SERIAL',
+						'allow_null'	=> false
+					),
+					'topic_id'		=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> false
+					),
+					'user_id'			=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> false
+					),
+					'answer_id'			=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> false
+					)
+				),
+				'PRIMARY KEY'	=> array('id')
+			);
+			$forum_db->create_table('voting', $schema);
+		}
+
+		if (!$forum_db->table_exists('answers'))
+		{
+			$schema = array(
+				'FIELDS'	=> array(
+					'id'				=> array(
+						'datatype'		=> 'SERIAL',
+						'allow_null'	=> false
+					),
+					'topic_id'		=> array(
+						'datatype'		=> 'int(10)',
+						'allow_null'	=> false
+					),
+					'answer'			=> array(
+						'datatype'		=> 'VARCHAR(100)',
+						'allow_null'	=> true
+					)
+				),
+				'PRIMARY KEY'	=>	array('id')
+			);
+			$forum_db->create_table('answers', $schema);
+		}
+
+		$forum_db->add_field('groups', 'g_poll_add', 'TINYINT(1)', false, 1);
+
+		forum_config_add('p_pun_poll_enable_read', '0');
+		forum_config_add('p_pun_poll_enable_revote', '0');
+		forum_config_add('p_pun_poll_max_answers', '7');
+	]]></install>
+
+	<uninstall><![CDATA[
+		$forum_db->drop_table('questions');
+		$forum_db->drop_table('answers');
+		$forum_db->drop_table('voting');
+		$forum_db->drop_field('groups', 'g_poll_add');
+
+		forum_config_remove(array('p_pun_poll_enable_read', 'p_pun_poll_enable_revote', 'p_pun_poll_max_answers'));
+	]]></uninstall>
+
+	<hooks>
+
+		<hook id="ed_start, po_start"><![CDATA[
+			if ($forum_user['language'] !== 'English' && file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+				include_once $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+			else
+				include_once $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+
+			include $ext_info['path'].'/functions.php';
+
+			if ($forum_user['style'] !== 'Oxygen' && file_exists($ext_info['path'].'/css/'.$forum_user['style'].'/pun_poll.min.css'))
+				$forum_loader->add_css($ext_info['url'].'/css/'.$forum_user['style'].'/pun_poll.min.css', array('type' => 'url', 'media' => 'screen'));
+			else
+				$forum_loader->add_css($ext_info['url'].'/css/Oxygen/pun_poll.min.css', array('type' => 'url', 'media' => 'screen'));
+
+			// No script CSS
+			$forum_loader->add_css('#pun_poll_switcher_block, #pun_poll_add_options_link { display: none; } #pun_poll_form_block, #pun_poll_update_block { display: block !important; }', array('type' => 'inline', 'noscript' => true));
+
+			// JS
+			$forum_loader->add_js($ext_info['url'].'/js/pun_poll.min.js', array('type' => 'url', 'async' => true));
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ed_post_selected"><![CDATA[
+			$topic_poll = FALSE;
+			if ($can_edit_subject && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add'])) {
+				$pun_poll_query = array(
+					'SELECT'	=>	'question, read_unvote_users, revote, created, days_count, votes_count',
+					'FROM'		=>	'questions',
+					'WHERE'		=>	'topic_id = '.$cur_post['tid']
+				);
+				$pun_poll_results = $forum_db->query_build($pun_poll_query) or error(__FILE__, __LINE__);
+
+				if ($row = $forum_db->fetch_row($pun_poll_results)) {
+					list($poll_question, $poll_read_unvote_users, $poll_revote, $poll_created, $poll_days_count, $poll_votes_count) = $row;
+					$topic_poll = TRUE;
+				}
+
+				if ($topic_poll) {
+					$pun_poll_query = array(
+						'SELECT'	=>	'answer',
+						'FROM'		=>	'answers',
+						'WHERE'		=>	'topic_id = '.$cur_post['tid'],
+						'ORDER BY'	=>	'id ASC'
+					);
+					$pun_poll_results = $forum_db->query_build($pun_poll_query) or error(__FILE__, __LINE__);
+
+					$poll_answers = array();
+					while ($cur_answer = $forum_db->fetch_assoc($pun_poll_results)) {
+						$poll_answers[] = $cur_answer['answer'];
+					}
+
+					if (empty($poll_answers)) {
+						message($lang_common['Bad request']);
+					}
+				}
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ed_pre_header_load"><![CDATA[
+			//
+			$forum_page['hidden_fields']['pun_poll_block_status'] = '<input type="hidden" name="pun_poll_block_open" id="pun_poll_block_status" value="1" />';
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ed_form_submitted"><![CDATA[
+			if (!isset($_POST['preview']) && $can_edit_subject && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add'])) {
+				$reset_poll = (isset($_POST['reset_poll']) && $_POST['reset_poll'] == '1') ? true : false;
+				$remove_poll = (isset($_POST['remove_poll']) && $_POST['remove_poll'] == '1') ? true : false;
+
+				// We need to reset poll
+				if ($reset_poll) {
+					Pun_poll::reset_poll($cur_post['tid']);
+				}
+
+				if ($remove_poll) {
+					Pun_poll::remove_poll($cur_post['tid']);
+				}
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ed_end_validation"><![CDATA[
+			if (!isset($_POST['reset_poll']) || $_POST['reset_poll'] != '1') {
+
+				if (($forum_user['group_id'] == FORUM_ADMIN && $can_edit_subject) || ($can_edit_subject && !$topic_poll)) {
+					// Get information about new poll.
+					$new_poll_question = isset($_POST['question_of_poll']) && !empty($_POST['question_of_poll']) ? $_POST['question_of_poll'] : FALSE;
+					if (!empty($new_poll_question)) {
+						$new_poll_answers = isset($_POST['poll_answer']) && !empty($_POST['poll_answer']) ? $_POST['poll_answer'] : FALSE;
+						$new_poll_days = isset($_POST['allow_poll_days']) && !empty($_POST['allow_poll_days']) ? $_POST['allow_poll_days'] : FALSE;
+						$new_poll_votes = isset($_POST['allow_poll_votes']) && !empty($_POST['allow_poll_votes']) ? $_POST['allow_poll_votes'] : FALSE;
+						$new_read_unvote_users = isset($_POST['read_unvote_users']) && !empty($_POST['read_unvote_users']) ? $_POST['read_unvote_users'] : FALSE;
+						$new_revote = isset($_POST['revouting']) ? $_POST['revouting'] : FALSE;
+
+						Pun_poll::data_validation($new_poll_question, $new_poll_answers, $new_poll_days, $new_poll_votes, $new_read_unvote_users, $new_revote);
+					}
+
+					if (isset($_POST['update_poll'])) {
+						$new_poll_ans_count = isset($_POST['poll_ans_count']) && intval($_POST['poll_ans_count']) > 0 ? intval($_POST['poll_ans_count']) : FALSE;
+
+						if (!$new_poll_ans_count)
+							$errors[] = $lang_pun_poll['Empty option count'];
+						if ($new_poll_ans_count < 2)
+						{
+							$errors[] = $lang_pun_poll['Min cnt options'];
+							$new_poll_ans_count = 2;
+						}
+
+						if ($new_poll_ans_count > $forum_config['p_pun_poll_max_answers'])
+						{
+							$errors[] = sprintf($lang_pun_poll['Max cnt options'], $forum_config['p_pun_poll_max_answers']);
+							$new_poll_ans_count = $forum_config['p_pun_poll_max_answers'];
+						}
+
+						$_POST['preview'] = 1;
+					} else if ($new_poll_question !== FALSE && empty($errors) && !isset($_POST['preview'])) {
+						if (!$topic_poll) {
+							Pun_poll::add_poll($cur_post['tid'], $new_poll_question, $new_poll_answers, $new_poll_days !== FALSE ? $new_poll_days : 'NULL', $new_poll_votes !== FALSE ? $new_poll_votes : 'NULL', $new_read_unvote_users !== FALSE ? $new_read_unvote_users : '0', $new_revote !== FALSE ? $new_revote : '0');
+						} else {
+							Pun_poll::update_poll($cur_post['tid'], $new_poll_question, $new_poll_answers, $new_poll_days !== FALSE ? $new_poll_days : null, $new_poll_votes !== FALSE ? $new_poll_votes : null, $new_read_unvote_users !== FALSE ? $new_read_unvote_users : '0', $new_revote !== FALSE ? $new_revote : '0', $poll_question, $poll_answers, $poll_days_count, $poll_votes_count, $poll_read_unvote_users, $poll_revote);
+						}
+					}
+
+				}
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ed_preview_pre_display"><![CDATA[
+			if ((($forum_user['group_id'] == FORUM_ADMIN && $can_edit_subject) || ($can_edit_subject && !$topic_poll)) && empty($errors)) {
+				if (!empty($new_poll_question) && !empty($new_poll_answers)) {
+					$forum_page['preview_message'] .= Pun_poll::poll_preview($new_poll_question, $new_poll_answers);
+				}
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ed_main_fieldset_end"><![CDATA[
+			if ($can_edit_subject && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add']))
+			{
+				//Is there something?
+				if ($topic_poll) {
+					if ($forum_user['group_id'] == FORUM_ADMIN) {
+						Pun_poll::show_form(isset($new_poll_question) ? $new_poll_question : $poll_question, isset($new_poll_answers) ? $new_poll_answers : $poll_answers, isset($new_poll_ans_count) ? $new_poll_ans_count : (isset($new_poll_answers) ? count($new_poll_answers) : count($poll_answers)), isset($new_poll_days) ? $new_poll_days : $poll_days_count, isset($new_poll_votes) ? $new_poll_votes : $poll_votes_count, isset($new_read_unvote_users) ? $new_read_unvote_users : $poll_read_unvote_users, isset($new_revote) ? $new_revote : $poll_revote, true);
+					}
+				} else {
+					Pun_poll::show_form(isset($new_poll_question) ? $new_poll_question : '', isset($new_poll_answers) ? $new_poll_answers : '', isset($new_poll_ans_count) ? $new_poll_ans_count : (isset($new_poll_answers) ? (count($new_poll_answers) > 2 ? count($new_poll_answers) : 2) : 2), isset($new_poll_days) ? $new_poll_days : FALSE, isset($new_poll_votes) ? $new_poll_votes : FALSE, $forum_config['p_pun_poll_enable_read'] ? (isset($new_read_unvote_users) ? $new_read_unvote_users : '0') : FALSE, $forum_config['p_pun_poll_enable_revote'] ? (isset($new_revote) ? $new_revote : '0') : FALSE);
+				}
+			}
+		]]></hook>
+
+
+		<!-- Validate poll -->
+		<hook id="po_form_submitted"><![CDATA[
+			if ($fid && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add']))
+			{
+				$poll_question = isset($_POST['question_of_poll']) && !empty($_POST['question_of_poll']) ? $_POST['question_of_poll'] : FALSE;
+				if (!empty($poll_question))
+				{
+					$poll_answers = isset($_POST['poll_answer']) && !empty($_POST['poll_answer']) ? $_POST['poll_answer'] : FALSE;
+					$poll_days = isset($_POST['allow_poll_days']) && !empty($_POST['allow_poll_days']) ? $_POST['allow_poll_days'] : FALSE;
+					$poll_votes = isset($_POST['allow_poll_votes']) && !empty($_POST['allow_poll_votes']) ? $_POST['allow_poll_votes'] : FALSE;
+					$poll_read_unvote_users = isset($_POST['read_unvote_users']) && !empty($_POST['read_unvote_users']) ? $_POST['read_unvote_users'] : FALSE;
+					$poll_revote = isset($_POST['revouting']) && !empty($_POST['revouting']) ? $_POST['revouting'] : FALSE;
+
+					Pun_poll::data_validation($poll_question, $poll_answers, $poll_days, $poll_votes, $poll_read_unvote_users, $poll_revote);
+				}
+			}
+		]]></hook>
+
+
+		<!-- Update Poll -->
+		<hook id="po_end_validation"><![CDATA[
+			if ($fid && isset($_POST['update_poll']) && empty($errors))	{
+				$new_poll_ans_count = isset($_POST['poll_ans_count']) && intval($_POST['poll_ans_count']) > 0 ? intval($_POST['poll_ans_count']) : FALSE;
+
+				if (!$new_poll_ans_count)
+					$errors[] = $lang_pun_poll['Empty option count'];
+
+				if ($new_poll_ans_count < 2)
+				{
+					$errors[] = $lang_pun_poll['Min cnt options'];
+					$new_poll_ans_count = 2;
+				}
+
+				if ($new_poll_ans_count > $forum_config['p_pun_poll_max_answers'])
+				{
+					$errors[] = sprintf($lang_pun_poll['Max cnt options'], $forum_config['p_pun_poll_max_answers']);
+					$new_poll_ans_count = $forum_config['p_pun_poll_max_answers'];
+				}
+
+				$_POST['preview'] = 'pun_poll';
+			}
+		]]></hook>
+
+
+		<!-- Unset preview setted on poll update -->
+		<hook id="po_pre_header_load"><![CDATA[
+			if ($fid && isset($_POST['update_poll']) && isset($_POST['preview']) && $_POST['preview'] == 'pun_poll') {
+				unset($_POST['preview']);
+			}
+
+			//
+			$forum_page['hidden_fields']['pun_poll_block_status'] = '<input type="hidden" name="pun_poll_block_open" id="pun_poll_block_status" value="0" />';
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="po_pre_redirect"><![CDATA[
+			if ($fid && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add']) && $poll_question !== FALSE && empty($errors))
+			{
+				Pun_poll::add_poll($new_tid, $poll_question, $poll_answers, $poll_days !== FALSE ? $poll_days : 'NULL', $poll_votes !== FALSE ? $poll_votes : 'NULL', $poll_read_unvote_users === FALSE  ? '0' : $poll_read_unvote_users, $poll_revote === FALSE ? '0' : $poll_revote);
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="po_preview_pre_display"><![CDATA[
+			if ($fid && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add']) && $poll_question !== FALSE && empty($errors)) {
+				$forum_page['preview_message'] .= Pun_poll::poll_preview($poll_question, $poll_answers);
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="po_req_info_fieldset_end"><![CDATA[
+			if ($fid && ($forum_user['group_id'] == FORUM_ADMIN || $forum_user['g_poll_add']))
+			{
+				$_poll_question = isset($poll_question) ? $poll_question : '';
+				$_poll_answers = isset($poll_answers) ? $poll_answers : array();
+				$_poll_answers_num = isset($new_poll_ans_count) ? $new_poll_ans_count : ((isset($poll_answers) && count($poll_answers) > 1) ? count($poll_answers) : 2);
+
+				Pun_poll::show_form($_poll_question, $_poll_answers, $_poll_answers_num, !empty($poll_days) ? $poll_days : '', !empty($poll_votes) ? $poll_votes : '', isset($poll_read_unvote_users) ? $poll_read_unvote_users : '0', isset($poll_revote) ? $poll_revote : '0');
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="ca_fn_prune_qr_prune_topics, mr_confirm_delete_topics_qr_delete_topics"><![CDATA[
+			$pun_poll_topic_ids = isset($topic_ids) ? $topic_ids : implode(',', $topics);
+			$query_poll = array(
+				'DELETE'	=>	'voting',
+				'WHERE'		=>	'topic_id IN('.$pun_poll_topic_ids.')'
+			);
+			$forum_db->query_build($query_poll) or error(__FILE__, __LINE__);
+
+			$query_poll = array(
+				'DELETE'	=>	'questions',
+				'WHERE'		=>	'topic_id IN('.$pun_poll_topic_ids.')'
+			);
+			$forum_db->query_build($query_poll) or error(__FILE__, __LINE__);
+
+			$query_poll = array(
+				'DELETE'	=>	'answers',
+				'WHERE'		=>	'topic_id IN('.$pun_poll_topic_ids.')'
+			);
+			$forum_db->query_build($query_poll) or error(__FILE__, __LINE__);
+			unset($pun_poll_topic_ids);
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="fn_delete_topic_qr_delete_topic"><![CDATA[
+			include_once $ext_info['path'].'/functions.php';
+
+			Pun_poll::remove_poll($topic_id);
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="mr_qr_get_forum_data"><![CDATA[
+			if (isset($_POST['merge_topics']) || isset($_POST['merge_topics_comply']))
+			{
+				$poll_topics = isset($_POST['topics']) && !empty($_POST['topics']) ? $_POST['topics'] : array();
+				$poll_topics = array_map('intval', (is_array($poll_topics) ? $poll_topics : explode(',', $poll_topics)));
+
+				if (empty($poll_topics))
+					message($lang_misc['No topics selected']);
+
+				if (count($poll_topics) == 1)
+					message($lang_misc['Merge error']);
+
+				$query_poll = array(
+					'SELECT'	=>	'topic_id',
+					'FROM'		=>	'questions',
+					'WHERE'		=>	'topic_id IN('.implode(',', $poll_topics).')'
+				);
+				$result_pun_poll = $forum_db->query_build($query_poll) or error(__FILE__, __LINE__);
+
+				$polls = array();
+				while ($row = $forum_db->fetch_assoc($result_pun_poll)) {
+					$polls[] = $row['topic_id'];
+				}
+
+				if (count($polls) > 1) {
+					if (file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+						include_once $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+					else
+						include_once $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+
+					message($lang_pun_poll['Merge error']);
+				} else if (count($polls) === 1) {
+					$question_id = $polls[0];
+				}
+
+				unset($num_polls, $polls);
+			}
+		]]></hook>
+
+
+		<hook id="mr_confirm_merge_topics_pre_redirect"><![CDATA[
+			if (isset($question_id) && $question_id != $merge_to_tid)
+			{
+				$query_poll = array(
+					'UPDATE'	=>	'questions',
+					'SET'		=>	'topic_id = '.$merge_to_tid,
+					'WHERE'		=>	'topic_id = '.$question_id
+				);
+				$forum_db->query_build($query) or error(__FILE__, __LINE__);
+			}
+		]]></hook>
+
+
+		<!-- Get Poll info -->
+		<hook id="vt_modify_topic_info"><![CDATA[
+			if (!$forum_user['is_guest']) {
+				//Get info about poll
+				$query_pun_poll = array(
+					'SELECT'	=>	'question, read_unvote_users, revote, created, days_count, votes_count AS max_votes_count',
+					'FROM'		=>	'questions',
+					'WHERE'		=>	'topic_id = '.$id
+				);
+				$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+				$pun_poll = $forum_db->fetch_assoc($result_pun_poll);
+
+				// Is there something?
+				if (!is_null($pun_poll) && $pun_poll !== false) {
+					if ($forum_user['style'] !== 'Oxygen' && file_exists($ext_info['path'].'/css/'.$forum_user['style'].'/pun_poll.min.css'))
+						$forum_loader->add_css($ext_info['url'].'/css/'.$forum_user['style'].'/pun_poll.min.css', array('type' => 'url', 'media' => 'screen'));
+					else
+						$forum_loader->add_css($ext_info['url'].'/css/Oxygen/pun_poll.min.css', array('type' => 'url', 'media' => 'screen'));
+
+					// JS
+					$forum_loader->add_js($ext_info['url'].'/js/pun_poll.min.js', array('type' => 'url', 'async' => true));
+
+					$end_voting = false;
+					$pun_poll['revote'] = ($forum_config['p_pun_poll_enable_revote'] == '1') ? $pun_poll['revote'] : 0;
+					$pun_poll['read_unvote_users'] = ($forum_config['p_pun_poll_enable_read'] == '1') ? $pun_poll['read_unvote_users'] : 0;
+
+					// Check up for condition of end poll
+					if ($pun_poll['days_count'] != 0 && time() > $pun_poll['created'] + $pun_poll['days_count'] * 86400) {
+						$end_voting = true;
+					} else if ($pun_poll['max_votes_count'] != 0) {
+						// Get count of votes
+						$query_pun_poll = array(
+							'SELECT'	=>	'COUNT(id) AS vote_count',
+							'FROM'		=>	'voting',
+							'WHERE'		=>	'topic_id='.$id
+						);
+						$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+						$row = $forum_db->fetch_assoc($result_pun_poll);
+						$vote_count = $row['vote_count'];
+
+						if ($vote_count >= $pun_poll['max_votes_count']) {
+							$end_voting = true;
+						}
+					}
+
+					if ($forum_user['language'] != 'English' && file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+						include_once $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+					else
+						include_once $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+
+					// Does user want to vote?
+					if (isset($_POST['vote'])) {
+						if ($end_voting) {
+							message($lang_pun_poll['End of vote']);
+						}
+
+						$answer_id = isset($_POST['answer']) ? intval($_POST['answer']) : 0;
+						if ($answer_id < 1) {
+							message($lang_common['Bad request']);
+						}
+
+						// Is there answer with this id?
+						$query_pun_poll = array(
+							'SELECT'	=>	'COUNT(*)',
+							'FROM'		=>	'answers',
+							'WHERE'		=>	'topic_id='.$id.' AND id='.$answer_id
+						);
+						$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+						if ($forum_db->result($result_pun_poll) < 1) {
+							message($lang_common['Bad request']);
+						}
+
+						// Have user voted?
+						$query_pun_poll = array(
+							'SELECT'	=>	'answer_id',
+							'FROM'		=>	'voting',
+							'WHERE'		=>	'topic_id='.$id.' AND user_id='.$forum_user['id']
+						);
+						$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+						$row = $forum_db->fetch_assoc($result_pun_poll);
+						$old_answer_id = FALSE;
+						if ($row) {
+							$old_answer_id = $row['answer_id'];
+						}
+
+						// CAN revote?
+						if (!$pun_poll['revote'] && $old_answer_id !== FALSE) {
+							message($lang_pun_poll['User vote error']);
+						}
+
+						// If user have voted we update table,
+						// if not - insert new record
+						if ($pun_poll['revote'] && $old_answer_id !== FALSE) {
+							// Do we needed to update DB?
+							if ($old_answer_id != $answer_id) {
+								$query_pun_poll = array(
+									'UPDATE'	=>	'voting',
+									'SET'		=>	'answer_id='.$answer_id,
+									'WHERE'		=>	'topic_id='.$id.' AND user_id='.$forum_user['id']
+								);
+								$forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+
+								// Replace old answer id with new for correct output
+								$old_answer_id = $answer_id;
+							}
+						} else {
+							// Add new record
+							$query_pun_poll = array(
+								'INSERT'	=>	'topic_id, user_id, answer_id',
+								'INTO'		=>	'voting',
+								'VALUES'	=>	$id.', '.$forum_user['id'].', '.$answer_id
+							);
+							$forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+						}
+
+						redirect(forum_link($forum_url['topic'], array($id, sef_friendly($cur_topic['subject']))), $lang_pun_poll['Poll redirect']);
+					} else {
+						// Determine user have voted or not
+						$query_pun_poll = array(
+							'SELECT'	=>	'COUNT(*)',
+							'FROM'		=>	'voting',
+							'WHERE'		=>	'user_id='.$forum_user['id'].' AND topic_id='.$id
+						);
+						$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+						$is_voted_user = ($forum_db->result($result_pun_poll) > 0) ? true : false;
+					}
+				}
+			}
+		]]></hook>
+
+
+		<hook id="vt_pre_header_load"><![CDATA[
+			// Is there something to show?
+			if (isset($pun_poll['read_unvote_users']) && !$forum_user['is_guest']) {
+				// If we don't get count of votes
+				if (!isset($vote_count)) {
+					$query_pun_poll = array(
+						'SELECT'	=>	'COUNT(*) AS vote_count',
+						'FROM'		=>	'voting',
+						'WHERE'		=>	'topic_id='.$id
+					);
+					$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+					$row = $forum_db->fetch_assoc($result_pun_poll);
+					$vote_count = $row['vote_count'];
+				}
+
+				// Showing of vote-form if users can revote or user don't vote
+				if (!$end_voting && (($is_voted_user && $pun_poll['revote']) || $is_voted_user === false)) {
+					$query_pun_poll = array(
+						'SELECT'	=>	'id, answer',
+						'FROM'		=>	'answers',
+						'WHERE'		=>	'topic_id='.$id,
+						'ORDER BY'	=>	'id ASC'
+					);
+					$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+
+					$pun_poll_answers = array();
+					while ($row = $forum_db->fetch_assoc($result_pun_poll)) {
+						$pun_poll_answers[] = $row;
+					}
+
+					if (!empty($pun_poll_answers))
+					{
+						$vote_form = '';
+						$link = forum_link($forum_url['topic'], $id);
+
+						$vote_form = '
+							<div class="pun_poll_item unvotted">
+								<div class="pun_poll_header">'.forum_htmlencode($pun_poll['question']).'</div>
+								<div class="main-frm">
+									<form class="frm-form" action="'.$link.'" accept-charset="utf-8" method="post">
+										<fieldset class="frm-group group1">
+											<div class="hidden">
+												<input type="hidden" name="csrf_token" value="'.generate_form_token($link).'" />
+											</div>
+											<fieldset class="mf-set set1">
+												<legend><span>'.$lang_pun_poll['Options'].'</span></legend>
+												<div class="mf-box">';
+
+						// Determine old answer of user
+						if (!isset($old_answer_id)) {
+							$query_pun_poll = array(
+								'SELECT'	=>	'answer_id',
+								'FROM'		=>	'voting',
+								'WHERE'		=>	'topic_id = '.$id.' AND user_id = '.$forum_user['id'],
+								'ORDER BY'	=>	'answer_id ASC'
+							);
+							$result_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+
+							// If there is something?
+							$row = $forum_db->fetch_assoc($result_poll);
+							if ($row) {
+								$old_answer_id = $row['answer_id'];
+							}
+							unset($result_poll);
+						}
+
+
+						$num = 0;
+						foreach ($pun_poll_answers as $answer) {
+							$num++;
+							$vote_form .= '
+								<div class="mf-item pun_poll_answer_block" data-num="'.$num.'">
+									<span class="fld-input">
+										<input id="fld'.$num.'" type="radio"'.((isset($old_answer_id) && $old_answer_id == $answer['id']) ? ' checked="checked"' : '').' value="'.$answer['id'].'" name="answer" />
+									</span>
+									<label for="fld'.$num.'">'.forum_htmlencode($answer['answer']).'</label>
+								</div>';
+						}
+
+						$vote_form .= '
+												</div>
+											</fieldset>
+										</fieldset>
+										<div class="frm-buttons">
+											<span class="submit">
+												<input type="submit" value="'.$lang_pun_poll['But note'].'" name="vote" />
+											</span>
+										</div>
+									</form>
+								</div>
+							</div>';
+					}
+				}
+
+				// Showing voting results if user have voted or unread user can see voting results
+				if ($end_voting || $is_voted_user || (!$is_voted_user && $pun_poll['read_unvote_users'])) {
+					if (isset($vote_count) && $vote_count > 0) {
+						$query_pun_poll = array(
+							'SELECT'	=>	'answer, COUNT(v.id) as num_vote',
+							'FROM'		=>	'answers as a',
+							'JOINS'		=>	array(
+								array(
+									'LEFT JOIN'	=>	'voting AS v',
+									'ON'		=>	'a.id=v.answer_id'
+								)
+							),
+							'WHERE'		=>	'a.topic_id='.$id,
+							'GROUP BY'	=>	'a.id',
+							'ORDER BY'	=>	'a.id'
+						);
+						$result_pun_poll = $forum_db->query_build($query_pun_poll) or error(__FILE__, __LINE__);
+
+						$vote_results = '<div class="pun_poll_item votted"><div class="pun_poll_header">'.forum_htmlencode($pun_poll['question']).'</div>';
+						$vote_results_raw = array();
+						$num = $winner_index = $cur_vote_index = 0;
+						$max_vote = $num_winner = 0;
+
+						while ($row = $forum_db->fetch_assoc($result_pun_poll)) {
+							$vote_results_raw[] = $row;
+							if ($row['num_vote'] > $max_vote) {
+								$max_vote = $row['num_vote'];
+								$winner_index = $cur_vote_index;
+							}
+
+							$cur_vote_index++;
+						}
+
+						// Case when winner is not one
+						foreach ($vote_results_raw as $vote) {
+							if ($vote['num_vote'] == $max_vote) {
+								$num_winner++;
+							}
+						}
+
+						if ($num_winner !== 1) {
+							// No winner
+							$winner_index = -1;
+						}
+
+						foreach ($vote_results_raw as $vote) {
+							$pollResultWidth = ((float)/**/$vote['num_vote'] / $vote_count * 100);
+							$vote_results .= '
+								<dl>
+									<dt><strong>'.forum_number_format((float)/**/$vote['num_vote'] / $vote_count * 100).'%</strong><br/>('.$vote['num_vote'].')</dt>
+									<dd>'.forum_htmlencode($vote['answer'])
+										.'<div class="'.(($winner_index == $num) ? 'winner' : '').(($pollResultWidth > 0) ? '' : ' poll-empty').'" style="width: '.$pollResultWidth.'%;"></div>
+									</dd>
+								</dl>';
+							$num++;
+						}
+
+						$num++;
+						$vote_results .= '<p class="pun_poll_total">'.$lang_pun_poll['Users count'].$vote_count.'</p>';
+						$vote_results .= '</div>';
+					} else {
+						$vote_results = '<div class="ct-box info-box"><p>'.$lang_pun_poll['No votes'].'</p></div>';
+					}
+				} else {
+					$vote_results = ' ';
+				}
+
+				unset($tmp_pagepost, $vote_count, $num, $result_pun_poll, $query_pun_poll, $count_v, $answer, $is_voted_user, $end_voting, $pun_poll);
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="vt_row_pre_display" priority="4"><![CDATA[
+			if ((isset($vote_results) || isset($vote_form)) && ($cur_post['id'] == $cur_topic['first_post_id'])) {
+				$pun_poll_block = '';
+				if (!empty($vote_form)) {
+					$pun_poll_block	.= $vote_form;
+				}
+				$pun_poll_block	.= $vote_results;
+
+				if (isset($forum_page['message']['edited'])) {
+					array_insert($forum_page['message'], 'edited', $pun_poll_block, 'pun_poll');
+				} else if (isset($forum_page['message']['signature'])) {
+					array_insert($forum_page['message'], 'signature', $pun_poll_block, 'pun_poll');
+				} else {
+					$forum_page['message']['pun_poll'] = $pun_poll_block;
+				}
+			}
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="aop_features_pre_header_load"><![CDATA[
+			if (file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+				include_once $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+			else
+				include_once $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="aop_features_validation"><![CDATA[
+			if ($forum_user['language'] != 'English' && file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+				include_once $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+			else
+				include_once $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+
+
+			if (!isset($form['pun_poll_enable_read']) || $form['pun_poll_enable_read'] != '1') $form['pun_poll_enable_read'] = '0';
+			if (!isset($form['pun_poll_enable_revote']) || $form['pun_poll_enable_revote'] != '1') $form['pun_poll_enable_revote'] = '0';
+
+			$form['pun_poll_max_answers'] = intval($form['pun_poll_max_answers']);
+
+			if ($form['pun_poll_max_answers'] > 100)
+				$form['pun_poll_max_answers'] = 100;
+
+			if ($form['pun_poll_max_answers'] < 2)
+				$form['pun_poll_max_answers'] = 2;
+
+		]]></hook>
+
+
+		<!-- -->
+		<hook id="aop_features_avatars_fieldset_end"><![CDATA[
+			?>
+				<div class="content-head">
+					<h2 class="hn"><span><?php echo $lang_pun_poll['Name plugin'] ?></span></h2>
+				</div>
+				<fieldset class="frm-group group1">
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box checkbox">
+							<span class="fld-input">
+								<input id="fld<?php echo ++$forum_page['fld_count'] ?>" type="checkbox" name="form[pun_poll_enable_revote]" value="1"<?php if ($forum_config['p_pun_poll_enable_revote'] == '1') echo ' checked="checked"' ?>/>
+							</span>
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><?php echo $lang_pun_poll['Disable revoting info'] ?></span>
+								<?php echo $lang_pun_poll['Disable revoting'] ?>
+							</label>
+						</div>
+					</div>
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box checkbox">
+							<span class="fld-input">
+								<input id="fld<?php echo ++$forum_page['fld_count'] ?>" type="checkbox" name="form[pun_poll_enable_read]" value="1"<?php if ($forum_config['p_pun_poll_enable_read'] == '1') echo ' checked="checked"' ?>/>
+							</span>
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><?php echo $lang_pun_poll['Disable see results'] ?></span>
+								<?php echo $lang_pun_poll['Disable see results info'] ?>
+							</label>
+						</div>
+					</div>
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><?php echo $lang_pun_poll['Maximum answers info'] ?></span>
+								<small><?php echo $lang_pun_poll['Maximum answers'] ?></small>
+							</label>
+							</br>
+							<span class="fld-input">
+								<input id="fld<?php echo $forum_page['fld_count'] ?>" type="text" name="form[pun_poll_max_answers]" size="6" maxlength="6" value="<?php echo $forum_config['p_pun_poll_max_answers'] ?>"/>
+							</span>
+						</div>
+					</div>
+				</fieldset>
+			<?php
+		]]></hook>
+
+
+		<hook id="agr_edit_end_qr_update_group"><![CDATA[
+			$query['SET'] .= ', g_poll_add='.((isset($_POST['poll_add']) && $_POST['poll_add'] == '1') ? 1 : 0);
+		]]></hook>
+
+
+		<hook id="agr_add_edit_group_user_permissions_fieldset_end"><![CDATA[
+			if (file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+				include_once $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+			else
+				include_once $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+			?>
+				<fieldset class="mf-set set<?php echo ++$forum_page['item_count'] ?>">
+					<legend>
+						<span><?php echo $lang_pun_poll['Permission'] ?></span>
+					</legend>
+					<div class="mf-box">
+						<div class="mf-item">
+							<span class="fld-input">
+								<input type="checkbox" id="fld<?php echo ++$forum_page['fld_count'] ?>" name="poll_add" value="1"<?php if ($group['g_poll_add'] == '1') echo ' checked="checked"' ?>/>
+							</span>
+							<label for="fld<?php echo $forum_page['fld_count'] ?>"><?php echo $lang_pun_poll['Poll add'] ?></label>
+						</div>
+					</div>
+				</fieldset>
+			<?php
+		]]></hook>
+	</hooks>
+</extension>

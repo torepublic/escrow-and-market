@@ -1,0 +1,40 @@
+table.logo td{
+	border:none;
+	padding:0px;
+}
+table.logo{
+	table-layout:initial;
+}
+
+td.title{
+	border:none;
+	overflow: visible;
+}
+td.logo{
+	padding:0px;
+}
+div.logo{
+	padding:0px;
+	border:none;
+	background-repeat: no-repeat;	
+}
+
+div.logo#right{
+	float:right;
+	}
+
+div.logo a.logo{
+	display:block;
+	height: 100%;
+	}
+	
+	table.logo, table.logo td{
+	//	border:solid 1px #000;
+	}
+
+table.logo td#right{
+	border-left: solid 1em transparent;
+	}
+	table.logo td#left{
+		border-right: solid 1em transparent;
+		}

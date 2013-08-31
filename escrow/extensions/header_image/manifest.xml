@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+ 
+<extension engine="1.0">
+	<id>header_image</id>
+	<title>Header Image</title>
+	<version>1.1.0</version>
+	<description>Adds a logo to the header of the forum.</description>
+	<author>Eliot Friedman</author>
+	<minversion>1.3.5</minversion>
+	<maxtestedon>1.3.5</maxtestedon>
+	<install>
+		<![CDATA[
+		// Fresh install
+		if (!defined('EXT_CUR_VERSION'))
+		{
+			$logo_url = $ext_info['url']."/img/example_logo.png";
+			$query = array(
+				'INSERT'	=> 'conf_name, conf_value',
+				'INTO'		=> 'config',
+				'VALUES'	=> "'o_header_image_url', '$logo_url'"
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+			
+			$query = array(
+				'INSERT'	=> 'conf_name, conf_value',
+				'INTO'		=> 'config',
+				'VALUES'	=> '\'o_header_image_postition\', \'ABOVE_TITLE\''
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+			
+			$query = array(
+				'INSERT'	=> 'conf_name, conf_value',
+				'INTO'		=> 'config',
+				'VALUES'	=> '\'o_header_image_link_url\', \''.forum_link($forum_url['index']).'\''
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+		}
+		// Upgrade from 1.0.0
+		elseif (EXT_CUR_VERSION == '1.0.0')
+		{
+			$query = array(
+				'INSERT'	=> 'conf_name, conf_value',
+				'INTO'		=> 'config',
+				'VALUES'	=> '\'o_header_image_link_url\', \''.forum_link($forum_url['index']).'\''
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+		}
+		]]>
+	</install>
+	<uninstall>
+		<![CDATA[
+			$query = array(
+				'DELETE'	=> 'config',
+				'WHERE'		=> 'conf_name = \'o_header_image_url\''
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+			
+			$query = array(
+				'DELETE'	=> 'config',
+				'WHERE'		=> 'conf_name = \'o_header_image_postition\''
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+			
+			$query = array(
+				'DELETE'	=> 'config',
+				'WHERE'		=> 'conf_name = \'o_header_image_link_url\''
+			);
+			$forum_db->query_build($query) or error(__FILE__, __LINE__);
+		]]>
+	</uninstall>
+	<hooks>
+		<!--Include style info-->
+		<hook id="hd_head">
+			<![CDATA[
+				$forum_head['style_header_image'] = '<link href="'.$ext_info['url'].'/css/'.$ext_info['id'].'.css" rel="stylesheet" type="text/css">';
+				if ($forum_config['o_header_image_postition'] == 'BEHIND_TITLE')
+				{
+					$header_image_url = $forum_config['o_header_image_url'];
+					$forum_head['style_header_background'] = <<<EOT
+<style type="text/css">
+	#brd-head
+	{
+		background-image: url('$header_image_url');
+	}
+</style>
+EOT;
+				}
+			]]>
+		</hook>
+		
+		<!--Insert the header image above or below the forum title+description
+			based on admin preference-->
+		<hook id="hd_gen_elements">
+			<![CDATA[
+				$header_img = '<img src="'.$forum_config['o_header_image_url'].'" />';
+				
+				if ($forum_config['o_header_image_link_url'] != '')
+					$header_img = '<a href="'.$forum_config['o_header_image_link_url'].'">' . $header_img . '</a>';
+				
+				$header_img = '<p id="brd-header-image">' . $header_img . '</p>';
+
+				if ($forum_config['o_header_image_postition'] == 'ABOVE_TITLE')
+					$gen_elements['<!-- forum_title -->'] = $header_img."\n<br />\n".$gen_elements['<!-- forum_title -->'];
+					
+				if ($forum_config['o_header_image_postition'] == 'BELOW_TITLE')
+					$gen_elements['<!-- forum_desc -->'] .= "\n<br />\n".$header_img;
+			]]>
+		</hook>
+		
+		<!--Add options to the ACP for changing the header image URL and
+			position-->
+		<hook id="aop_setup_pre_personal_fieldset_end">
+			<![CDATA[
+			// LANG INCLUDE
+			if (file_exists($ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php'))
+				include $ext_info['path'].'/lang/'.$forum_user['language'].'/'.$ext_info['id'].'.php';
+			else
+				include $ext_info['path'].'/lang/English/'.$ext_info['id'].'.php';
+
+			// Add a text option to the bottom of the first section of
+			// the main settings page for the forum's header image URL,
+			// link URL, & position.
+			?>
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><?php echo $lang_header_image['logo url label'] ?></span><small><?php echo $lang_header_image['logo url help'] ?></small></label><br />
+							</label><br />
+							<span class="fld-input"><input type="text" id="fld<?php echo $forum_page['fld_count'] ?>" name="form[header_image_url]" size="50" maxlength="255" value="<?php echo forum_htmlencode($forum_config['o_header_image_url']) ?>" /></span>
+						</div>
+					</div>
+					
+					<div class="sf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<div class="sf-box text">
+							<label for="fld<?php echo ++$forum_page['fld_count'] ?>">
+								<span><?php echo $lang_header_image['logo link label'] ?></span><small><?php echo $lang_header_image['logo link help'] ?></small></label><br />
+							</label><br />
+							<span class="fld-input"><input type="text" id="fld<?php echo $forum_page['fld_count'] ?>" name="form[header_image_link_url]" size="50" maxlength="255" value="<?php echo forum_htmlencode($forum_config['o_header_image_link_url']) ?>" /></span>
+						</div>
+					</div>
+
+					<fieldset class="mf-set set<?php echo ++$forum_page['item_count'] ?>">
+						<legend><span><?php echo $lang_header_image['logo position label'] ?></span></legend>
+						<div class="mf-box">
+							<div class="mf-item">
+								<span class="fld-input"><input type="radio" id="fld<?php echo ++$forum_page['fld_count'] ?>" name="form[header_image_postition]" value="ABOVE_TITLE"<?php if ($forum_config['o_header_image_postition'] == 'ABOVE_TITLE') echo ' checked="checked"' ?> /></span>
+								<label for="fld<?php echo $forum_page['fld_count'] ?>"><?php echo $lang_header_image['logo position above'] ?></label>
+							</div>
+							<div class="mf-item">
+								<span class="fld-input"><input type="radio" id="fld<?php echo ++$forum_page['fld_count'] ?>" name="form[header_image_postition]" value="BELOW_TITLE"<?php if ($forum_config['o_header_image_postition'] == 'BELOW_TITLE') echo ' checked="checked"' ?> /></span>
+								<label for="fld<?php echo $forum_page['fld_count'] ?>"><?php echo $lang_header_image['logo position below'] ?></label>
+							</div>
+							<div class="mf-item">
+								<span class="fld-input"><input type="radio" id="fld<?php echo ++$forum_page['fld_count'] ?>" name="form[header_image_postition]" value="BEHIND_TITLE"<?php if ($forum_config['o_header_image_postition'] == 'BEHIND_TITLE') echo ' checked="checked"' ?> /></span>
+								<label for="fld<?php echo $forum_page['fld_count'] ?>"><?php echo $lang_header_image['logo position behind'] ?></label>
+							</div>
+						</div>
+					</fieldset>
+			<?php
+			]]>
+		</hook>
+	</hooks>
+</extension>
